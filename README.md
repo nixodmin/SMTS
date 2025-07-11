@@ -84,3 +84,7 @@ python mes_client.py
 
 <img width="2540" height="994" alt="securechat" src="https://github.com/user-attachments/assets/6f001268-7df7-417b-8d9b-4774d2ada872" />
 
+## Работает замечательно и на андроиде через Pydroid
+
+![androidpy](https://github.com/user-attachments/assets/1d23293a-7430-4761-858d-a7901dcbe2f1)
+
