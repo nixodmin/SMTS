@@ -14,32 +14,11 @@ class ChatServer:
         self.clients = {}  # {client_id: socket}
         self.lock = threading.Lock()
         self.handshake_secret = "SECRET_HANDSHAKE_KEY"  # Секретный ключ для handshake
+        self.client_id_counter = 1
         print(f"Server started on {host}:{port}")
 
     def handle_client(self, client_socket, client_id):
         try:
-            # Первым делом проверяем handshake
-            handshake_data = self.recvall(client_socket, 4)
-            if not handshake_data or len(handshake_data) != 4:
-                client_socket.close()
-                return
-                
-            handshake_len = struct.unpack('>I', handshake_data)[0]
-            handshake_msg = self.recvall(client_socket, handshake_len)
-            
-            if not handshake_msg:
-                client_socket.close()
-                return
-                
-            try:
-                handshake = json.loads(handshake_msg.decode('utf-8'))
-                if handshake.get('secret') != self.handshake_secret:
-                    client_socket.close()
-                    return
-            except:
-                client_socket.close()
-                return
-
             while True:
                 # Сначала получаем длину сообщения
                 raw_msglen = self.recvall(client_socket, 4)
@@ -62,6 +41,56 @@ class ChatServer:
             print(f"Error with client {client_id}: {e}")
         finally:
             self.remove_client(client_id)
+
+    def handle_client_initial(self, client_socket, addr):
+        try:
+            # Проверяем handshake
+            handshake_data = self.recvall(client_socket, 4)
+            if not handshake_data or len(handshake_data) != 4:
+                client_socket.close()
+                return
+                
+            handshake_len = struct.unpack('>I', handshake_data)[0]
+            handshake_msg = self.recvall(client_socket, handshake_len)
+            
+            if not handshake_msg:
+                client_socket.close()
+                return
+                
+            try:
+                handshake = json.loads(handshake_msg.decode('utf-8'))
+                if handshake.get('secret') != self.handshake_secret:
+                    client_socket.close()
+                    return
+            except:
+                client_socket.close()
+                return
+
+            # Только после успешного handshake создаем client_id и добавляем клиента
+            with self.lock:
+                client_id = f"client_{self.client_id_counter}"
+                self.client_id_counter += 1
+                self.clients[client_id] = client_socket
+            
+            print(f"New connection from {addr} as {client_id}")
+
+            # Отправляем клиенту его ID
+            try:
+                welcome_msg = json.dumps({
+                    'type': 'welcome', 
+                    'client_id': client_id
+                })
+                welcome_len = struct.pack('>I', len(welcome_msg))
+                client_socket.sendall(welcome_len + welcome_msg.encode('utf-8'))
+            except:
+                self.remove_client(client_id)
+                return
+
+            # Переходим к основной обработке
+            self.handle_client(client_socket, client_id)
+        except Exception as e:
+            print(f"Initial handshake error with {addr}: {e}")
+            client_socket.close()
 
     def recvall(self, sock, n):
         data = bytearray()
@@ -101,31 +130,13 @@ class ChatServer:
                 print(f"Client {client_id} disconnected")
 
     def run(self):
-        client_id_counter = 1
         while True:
             client_socket, addr = self.server.accept()
-            client_id = f"client_{client_id_counter}"
-            client_id_counter += 1
             
-            with self.lock:
-                self.clients[client_id] = client_socket
-            print(f"New connection from {addr} as {client_id}")
-            
-            # Отправляем клиенту его ID
-            try:
-                welcome_msg = json.dumps({
-                    'type': 'welcome', 
-                    'client_id': client_id
-                })
-                welcome_len = struct.pack('>I', len(welcome_msg))
-                client_socket.sendall(welcome_len + welcome_msg.encode('utf-8'))
-            except:
-                self.remove_client(client_id)
-                continue
-            
+            # Сразу создаем поток для начальной обработки (handshake)
             thread = threading.Thread(
-                target=self.handle_client, 
-                args=(client_socket, client_id),
+                target=self.handle_client_initial,
+                args=(client_socket, addr),
                 daemon=True
             )
             thread.start()
