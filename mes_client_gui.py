@@ -18,15 +18,15 @@ class ChatClientGUI:
         self.root.title("SMTS GUI")
         self.root.geometry("800x600")
         
-        # Основные параметры
-        self.server_host = 'YOUR_SERVER_IP'
+        # Основные параметры (значения по умолчанию)
+        self.server_host = 'localhost'
         self.server_port = 5555
+        self.handshake_secret = "SECRET_HANDSHAKE_KEY"
         self.client_id = None
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.socket = None
         self.connections = {}
         self.dh_private_keys = {}
         self.lock = threading.Lock()
-        self.handshake_secret = "SECRET_HANDSHAKE_KEY"  # Должен совпадать с серверным
         
         # Параметры Диффи-Хеллмана
         self.dh_prime = int("FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD1"
@@ -42,12 +42,127 @@ class ChatClientGUI:
                           "5D2261898FA051015728E5A8AACAA68FFFFFFFFFFFFFFFF", 16)
         self.dh_base = 2
         
+        # Файл конфигурации
+        self.config_file = "client_config.json"
+        
+        # Загрузка настроек
+        self.load_config()
+        
         # Создание интерфейса
         self.create_widgets()
-        
-        # Подключение к серверу
-        self.connect_to_server()
+    
+    def load_config(self):
+        """Загрузка настроек из файла конфигурации"""
+        try:
+            if os.path.exists(self.config_file) and os.path.getsize(self.config_file) > 0:
+                with open(self.config_file, 'r') as f:
+                    config = json.load(f)
+                    self.server_host = config.get('server_host', self.server_host)
+                    self.server_port = config.get('server_port', self.server_port)
+                    self.handshake_secret = config.get('handshake_secret', self.handshake_secret)
+            else:
+                messagebox.showwarning("Настройки подключения", "Настройте подключение к серверу!")
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось загрузить настройки: {str(e)}")
+    
+    def save_config(self, host, port, secret):
+        """Сохранение настроек в файл"""
+        try:
+            config = {
+                'server_host': host,
+                'server_port': port,
+                'handshake_secret': secret
+            }
+            with open(self.config_file, 'w') as f:
+                json.dump(config, f)
+            
+            # Обновляем текущие настройки
+            self.server_host = host
+            self.server_port = port
+            self.handshake_secret = secret
+            return True
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось сохранить настройки: {str(e)}")
+            return False
+    
+    def show_connection_settings(self):
+        """Отображение окна настроек подключения"""
+        settings_window = tk.Toplevel(self.root)
+        settings_window.title("Настройки подключения")
+        settings_window.geometry("400x250")
+        settings_window.resizable(False, False)
 
+        # Центрирование окна
+        window_width = 400
+        window_height = 250
+        screen_width = settings_window.winfo_screenwidth()
+        screen_height = settings_window.winfo_screenheight()
+    
+        x = (screen_width // 2) - (window_width // 2)
+        y = (screen_height // 2) - (window_height // 2)
+    
+        settings_window.geometry(f"{window_width}x{window_height}+{x}+{y}")
+
+        # Переменные для полей ввода
+        host_var = tk.StringVar(value=self.server_host)
+        port_var = tk.StringVar(value=str(self.server_port))
+        secret_var = tk.StringVar(value=self.handshake_secret)
+        
+        # Фрейм для полей ввода
+        input_frame = ttk.Frame(settings_window, padding="10")
+        input_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Поля ввода
+        ttk.Label(input_frame, text="IP сервера:").grid(row=0, column=0, sticky=tk.W, pady=5)
+        host_entry = ttk.Entry(input_frame, textvariable=host_var, width=30)
+        host_entry.grid(row=0, column=1, sticky=tk.EW, pady=5)
+        
+        ttk.Label(input_frame, text="Порт сервера:").grid(row=1, column=0, sticky=tk.W, pady=5)
+        port_entry = ttk.Entry(input_frame, textvariable=port_var, width=30)
+        port_entry.grid(row=1, column=1, sticky=tk.EW, pady=5)
+        
+        ttk.Label(input_frame, text="Handshake пароль:").grid(row=2, column=0, sticky=tk.W, pady=5)
+        secret_entry = ttk.Entry(input_frame, textvariable=secret_var, width=30, show="*")
+        secret_entry.grid(row=2, column=1, sticky=tk.EW, pady=5)
+        
+        # Фрейм для кнопок
+        button_frame = ttk.Frame(settings_window, padding="10")
+        button_frame.pack(fill=tk.X, side=tk.BOTTOM)
+        
+        # Кнопка сохранения
+        save_button = ttk.Button(button_frame, text="Сохранить", 
+                               command=lambda: self.save_and_close(settings_window, host_var.get(), port_var.get(), secret_var.get()))
+        save_button.pack(side=tk.RIGHT, padx=5)
+        
+        # Кнопка отмены
+        cancel_button = ttk.Button(button_frame, text="Отмена", command=settings_window.destroy)
+        cancel_button.pack(side=tk.RIGHT)
+    
+    def save_and_close(self, window, host, port, secret):
+        """Сохранение настроек и закрытие окна"""
+        try:
+            port = int(port)
+            if port < 1 or port > 65535:
+                raise ValueError("Порт должен быть в диапазоне 1-65535")
+            if not host.strip():
+                raise ValueError("IP сервера не может быть пустым")
+            if not secret.strip():
+                raise ValueError("Handshake пароль не может быть пустым")
+            
+            if self.save_config(host, port, secret):
+                # Обновляем состояние меню после сохранения настроек
+                self.update_menu_state()
+                window.destroy()
+        except ValueError as e:
+            messagebox.showerror("Ошибка", str(e))
+
+    def update_menu_state(self):
+        """Обновляет состояние пунктов меню"""
+        config_exists = os.path.exists(self.config_file) and os.path.getsize(self.config_file) > 0
+        # Получаем ссылку на меню "Файл"
+        file_menu = self.root.nametowidget(".!menu.!menu")
+        # Меняем состояние пункта "Подключение к серверу"
+        file_menu.entryconfig(1, state=tk.NORMAL if config_exists else tk.DISABLED)
 
     def create_widgets(self):
         # Основной контейнер с двумя колонками
@@ -88,7 +203,7 @@ class ChatClientGUI:
         connect_frame = ttk.Frame(left_column, height=50)
         connect_frame.pack(side=tk.BOTTOM, fill=tk.X, expand=False)
         
-        connect_button = ttk.Button(connect_frame, text="Подключиться", command=self.connect_to_client)
+        connect_button = ttk.Button(connect_frame, text="Шифрованное соединение", command=self.connect_to_client)
         connect_button.pack(pady=5, padx=20, fill=tk.X, expand=True)
 
         # Правая колонка: Информация + Сообщения + Ввод
@@ -131,6 +246,16 @@ class ChatClientGUI:
         self.root.config(menu=menubar)
         
         file_menu = tk.Menu(menubar, tearoff=0)
+        file_menu.add_command(label="Настройки подключения", command=self.show_connection_settings)
+        
+        # Проверяем, есть ли конфигурация для активации пункта подключения
+        config_exists = os.path.exists(self.config_file) and os.path.getsize(self.config_file) > 0
+        file_menu.add_command(
+            label="Подключение к серверу", 
+            command=self.connect_to_server,
+            state=tk.NORMAL if config_exists else tk.DISABLED
+        )
+        file_menu.add_separator()
         file_menu.add_command(label="Выход", command=self.on_closing)
         menubar.add_cascade(label="Файл", menu=file_menu)
         
@@ -140,6 +265,8 @@ class ChatClientGUI:
     
     def connect_to_server(self):
         try:
+            # Создаем новый сокет
+            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.socket.connect((self.server_host, self.server_port))
 
             # Первым делом отправляем handshake
@@ -160,10 +287,18 @@ class ChatClientGUI:
             threading.Thread(target=self.receive_messages, daemon=True).start()
         except Exception as e:
             messagebox.showerror("Ошибка подключения", f"Не удалось подключиться к серверу: {str(e)}")
-            self.root.after(1000, self.root.destroy)
+            if self.socket:
+                try:
+                    self.socket.close()
+                except:
+                    pass
+            self.socket = None
     
     def send_json(self, message):
         try:
+            if not self.socket:
+                raise ConnectionError("Нет подключения к серверу")
+                
             message_str = json.dumps(message)
             message_len = struct.pack('>I', len(message_str))
             self.socket.sendall(message_len + message_str.encode('utf-8'))
@@ -174,6 +309,9 @@ class ChatClientGUI:
     
     def receive_json(self):
         try:
+            if not self.socket:
+                return None
+                
             raw_msglen = self.recvall(4)
             if not raw_msglen:
                 return None
@@ -189,6 +327,9 @@ class ChatClientGUI:
             return None
     
     def recvall(self, n):
+        if not self.socket:
+            return None
+            
         data = bytearray()
         while len(data) < n:
             packet = self.socket.recv(n - len(data))
@@ -209,6 +350,10 @@ class ChatClientGUI:
         return hashlib.sha256(key_material).digest()
     
     def start_dh_exchange(self, target_id):
+        if not self.socket:
+            self.add_message("[!] Нет подключения к серверу", error=True)
+            return
+            
         if target_id == self.client_id:
             self.add_message("[!] Нельзя подключиться к себе", error=True)
             return
@@ -474,11 +619,19 @@ class ChatClientGUI:
                 self.contacts_list.insert('', 'end', values=(target_id, status, key_hash))
     
     def connect_to_client(self):
+        if not self.socket:
+            self.add_message("[!] Нет подключения к серверу", error=True)
+            return
+            
         target_id = simpledialog.askstring("Подключение", "Введите ID клиента:")
         if target_id:
             self.start_dh_exchange(target_id)
     
     def send_message(self):
+        if not self.socket:
+            self.add_message("[!] Нет подключения к серверу", error=True)
+            return
+            
         message = self.message_entry.get()
         if not message:
             return
@@ -529,6 +682,10 @@ class ChatClientGUI:
         self.send_message()
     
     def send_file(self):
+        if not self.socket:
+            self.add_message("[!] Нет подключения к серверу", error=True)
+            return
+            
         selected = self.contacts_list.selection()
         if not selected:
             messagebox.showwarning("Ошибка", "Выберите получателя из списка")
@@ -589,7 +746,8 @@ class ChatClientGUI:
     def on_closing(self):
         if messagebox.askokcancel("Выход", "Вы уверены, что хотите выйти?"):
             try:
-                self.socket.close()
+                if self.socket:
+                    self.socket.close()
             except:
                 pass
             self.root.destroy()
