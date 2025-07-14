@@ -15,8 +15,8 @@ import struct
 class ChatClientGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("SMTS клиент")
-        self.root.geometry("1024x768")
+        self.root.title("SMTS GUI")
+        self.root.geometry("800x600")
         
         # Основные параметры
         self.server_host = 'YOUR_SERVER_IP'
@@ -26,6 +26,7 @@ class ChatClientGUI:
         self.connections = {}
         self.dh_private_keys = {}
         self.lock = threading.Lock()
+        self.handshake_secret = "SECRET_HANDSHAKE_KEY"  # Должен совпадать с серверным
         
         # Параметры Диффи-Хеллмана
         self.dh_prime = int("FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD1"
@@ -46,63 +47,84 @@ class ChatClientGUI:
         
         # Подключение к серверу
         self.connect_to_server()
-    
+
+
     def create_widgets(self):
-        # Основной фрейм
-        main_frame = ttk.Frame(self.root, padding="10")
-        main_frame.pack(fill=tk.BOTH, expand=True)
+        # Основной контейнер с двумя колонками
+        main_container = ttk.Frame(self.root)
+        main_container.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
-        # Фрейм для сообщений
-        msg_frame = ttk.LabelFrame(main_frame, text="Сообщения", padding="10")
-        msg_frame.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
+        # Левая колонка (40% ширины)
+        left_column = ttk.Frame(main_container, width=int(1024*0.4))
+        left_column.pack(side=tk.LEFT, fill=tk.BOTH, expand=False)
+        left_column.pack_propagate(False)
         
-        self.message_area = scrolledtext.ScrolledText(msg_frame, wrap=tk.WORD, state='disabled')
-        self.message_area.pack(fill=tk.BOTH, expand=True)
+        # Правая колонка (60% ширины)
+        right_column = ttk.Frame(main_container)
+        right_column.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
         
-        # Фрейм для управления
-        control_frame = ttk.Frame(main_frame, padding="10")
-        control_frame.pack(fill=tk.BOTH, side=tk.RIGHT)
+        # Левая колонка: Контакты + Кнопка подключения
         
-        # Фрейм для ввода сообщения
-        input_frame = ttk.Frame(control_frame)
-        input_frame.pack(fill=tk.X, pady=5)
+        # Контейнер для контактов (с фиксированной минимальной высотой)
+        contacts_frame = ttk.LabelFrame(left_column, text="Контакты", padding="5")
+        contacts_frame.pack(fill=tk.BOTH, expand=True)
         
-        self.message_entry = ttk.Entry(input_frame)
-        self.message_entry.pack(fill=tk.X, side=tk.LEFT, expand=True)
-        self.message_entry.bind("<Return>", self.send_message_event)
-        
-        send_button = ttk.Button(input_frame, text="Отправить", command=self.send_message)
-        send_button.pack(side=tk.RIGHT, padx=(5, 0))
-        
-        # Фрейм для списка контактов
-        contacts_frame = ttk.LabelFrame(control_frame, text="Контакты", padding="10")
-        contacts_frame.pack(fill=tk.BOTH, pady=5)
-        
+        # Treeview для контактов с вертикальным скроллингом
         self.contacts_list = ttk.Treeview(contacts_frame, columns=('id', 'status', 'key'), show='headings')
         self.contacts_list.heading('id', text='ID')
         self.contacts_list.heading('status', text='Статус')
         self.contacts_list.heading('key', text='Ключ')
-        self.contacts_list.column('id', width=100)
+        self.contacts_list.column('id', width=120)
         self.contacts_list.column('status', width=80)
         self.contacts_list.column('key', width=80)
-        self.contacts_list.pack(fill=tk.BOTH, expand=True)
         
-        # Фрейм для кнопок управления
-        button_frame = ttk.Frame(control_frame)
-        button_frame.pack(fill=tk.X, pady=5)
+        scrollbar = ttk.Scrollbar(contacts_frame, orient="vertical", command=self.contacts_list.yview)
+        self.contacts_list.configure(yscrollcommand=scrollbar.set)
         
-        connect_button = ttk.Button(button_frame, text="Подключиться", command=self.connect_to_client)
-        connect_button.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        self.contacts_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
-        file_button = ttk.Button(button_frame, text="Отправить файл", command=self.send_file)
-        file_button.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        # Фрейм для кнопки подключения (с фиксированной высотой)
+        connect_frame = ttk.Frame(left_column, height=50)
+        connect_frame.pack(side=tk.BOTTOM, fill=tk.X, expand=False)
         
-        # Фрейм для информации о клиенте
-        info_frame = ttk.LabelFrame(control_frame, text="Информация", padding="10")
-        info_frame.pack(fill=tk.BOTH, pady=5)
+        connect_button = ttk.Button(connect_frame, text="Подключиться", command=self.connect_to_client)
+        connect_button.pack(pady=5, padx=20, fill=tk.X, expand=True)
+
+        # Правая колонка: Информация + Сообщения + Ввод
+        
+        # Блок информации (верхний)
+        info_frame = ttk.LabelFrame(right_column, text="Информация", padding="10")
+        info_frame.pack(fill=tk.X, pady=(0, 10))
         
         self.client_info = ttk.Label(info_frame, text="Не подключено")
         self.client_info.pack()
+        
+        # Блок сообщений (70% от оставшейся высоты)
+        msg_frame = ttk.LabelFrame(right_column, text="Сообщения", padding="10")
+        msg_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        
+        self.message_area = scrolledtext.ScrolledText(msg_frame, wrap=tk.WORD, state='disabled')
+        self.message_area.pack(fill=tk.BOTH, expand=True)
+        
+        # Блок ввода (нижний)
+        input_frame = ttk.LabelFrame(right_column, text="Ввод сообщения", padding="10")
+        input_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        # Поле ввода сообщения
+        self.message_entry = ttk.Entry(input_frame)
+        self.message_entry.pack(fill=tk.X, pady=(0, 10))
+        self.message_entry.bind("<Return>", self.send_message_event)
+        
+        # Кнопки отправки
+        button_frame = ttk.Frame(input_frame)
+        button_frame.pack(fill=tk.X)
+        
+        send_button = ttk.Button(button_frame, text="Отправить", command=self.send_message)
+        send_button.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        
+        file_button = ttk.Button(button_frame, text="Отправить файл", command=self.send_file)
+        file_button.pack(side=tk.RIGHT, fill=tk.X, expand=True)
         
         # Меню
         menubar = tk.Menu(self.root)
@@ -119,7 +141,18 @@ class ChatClientGUI:
     def connect_to_server(self):
         try:
             self.socket.connect((self.server_host, self.server_port))
+
+            # Первым делом отправляем handshake
+            handshake_msg = json.dumps({'secret': self.handshake_secret})
+            handshake_len = struct.pack('>I', len(handshake_msg))
+            self.socket.sendall(handshake_len + handshake_msg.encode('utf-8'))
+
+            # Только после этого получаем welcome
             welcome_data = self.receive_json()
+            if not welcome_data or 'client_id' not in welcome_data:
+                self.socket.close()
+                raise ConnectionError("Handshake failed")
+
             self.client_id = welcome_data['client_id']
             self.client_info.config(text=f"ID: {self.client_id}")
             self.add_message(f"Подключено как {self.client_id}")
@@ -539,7 +572,7 @@ class ChatClientGUI:
                         continue
                     
                     self.send_json({
-                        'type': 'broadcast_file',
+                        'type': 'file',
                         'from': self.client_id,
                         'target_id': target_id,
                         'file_name': os.path.basename(filename),
@@ -551,7 +584,7 @@ class ChatClientGUI:
             self.add_message(f"[!] Ошибка отправки файла: {str(e)}", error=True)
     
     def show_about(self):
-        messagebox.showinfo("О программе", "SMTS Client\nGUI Версия")
+        messagebox.showinfo("О программе", "SMTS GUI\nВерсия 1.0.0")
     
     def on_closing(self):
         if messagebox.askokcancel("Выход", "Вы уверены, что хотите выйти?"):
@@ -570,4 +603,5 @@ if __name__ == "__main__":
     app.message_area.tag_config("error", foreground="red")
     
     root.protocol("WM_DELETE_WINDOW", app.on_closing)
+    root.state('zoomed')
     root.mainloop()
