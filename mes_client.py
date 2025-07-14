@@ -19,6 +19,7 @@ class ChatClient:
         self.connections = {}  # {target_id: {'status': 'pending'|'established', 'key': bytes, 'key_hash': str}}
         self.dh_private_keys = {}
         self.lock = threading.Lock()
+        self.handshake_secret = "SECRET_HANDSHAKE_KEY"  # Должен совпадать с серверным
         
         # Параметры Диффи-Хеллмана (RFC 3526, 2048 бит)
         self.dh_prime = int("FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD1"
@@ -36,7 +37,18 @@ class ChatClient:
 
     def connect(self):
         self.socket.connect((self.server_host, self.server_port))
+
+        # Первым делом отправляем handshake
+        handshake_msg = json.dumps({'secret': self.handshake_secret})
+        handshake_len = struct.pack('>I', len(handshake_msg))
+        self.socket.sendall(handshake_len + handshake_msg.encode('utf-8'))
+
+        # Только после этого получаем welcome
         welcome_data = self.receive_json()
+        if not welcome_data or 'client_id' not in welcome_data:
+            self.socket.close()
+            raise ConnectionError("Handshake failed")
+
         self.client_id = welcome_data['client_id']
         print(f"\nConnected as {self.client_id}")
         print("Type /help for commands\n")
